@@ -1,4 +1,5 @@
-import { useState } from 'react';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { useEffect, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -13,6 +14,7 @@ import {
 } from 'react-native';
 
 const API_URL = 'https://hindsightsupport.onrender.com/chat';
+const HISTORY_STORAGE_KEY = '@supportmind_customer_histories';
 
 type HistoryItem = {
   message: string;
@@ -22,6 +24,23 @@ type HistoryItem = {
   timestamp: string;
 };
 
+type CustomerHistories = Record<string, HistoryItem[]>;
+
+const CUSTOMERS = [
+  {
+    id: 'C001',
+    name: 'Current Customer',
+  },
+  {
+    id: 'C002',
+    name: 'Demo Customer',
+  },
+  {
+    id: 'C003',
+    name: 'New Demo Customer',
+  },
+];
+
 export default function HomeScreen() {
   const [message, setMessage] = useState('');
   const [reply, setReply] = useState('');
@@ -29,12 +48,11 @@ export default function HomeScreen() {
   const [loading, setLoading] = useState(false);
   const [lastMessage, setLastMessage] = useState('');
 
-  const [history, setHistory] = useState<HistoryItem[]>([]);
+  // Customer-wise history is now the single source of truth.
+  const [customerHistories, setCustomerHistories] =
+    useState<CustomerHistories>({});
 
-  // Customer-wise local history
-  const [customerHistories, setCustomerHistories] = useState<
-    Record<string, HistoryItem[]>
-  >({});
+  const [historyLoaded, setHistoryLoaded] = useState(false);
 
   const [showMemories, setShowMemories] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
@@ -46,11 +64,69 @@ export default function HomeScreen() {
   const [showCustomerPicker, setShowCustomerPicker] = useState(false);
   const [showProfile, setShowProfile] = useState(false);
 
+  // Current customer's history
+  const history = customerHistories[customerId] || [];
+
+  // Load saved history when app starts
+  useEffect(() => {
+    const loadCustomerHistories = async () => {
+      try {
+        const savedHistory = await AsyncStorage.getItem(
+          HISTORY_STORAGE_KEY
+        );
+
+        if (savedHistory) {
+          const parsedHistory = JSON.parse(savedHistory);
+
+          if (
+            parsedHistory &&
+            typeof parsedHistory === 'object'
+          ) {
+            setCustomerHistories(parsedHistory);
+          }
+        }
+      } catch (error) {
+        console.error(
+          'Failed to load customer history:',
+          error
+        );
+      } finally {
+        setHistoryLoaded(true);
+      }
+    };
+
+    loadCustomerHistories();
+  }, []);
+
+  // Save history whenever customer histories change
+  useEffect(() => {
+    if (!historyLoaded) return;
+
+    const saveCustomerHistories = async () => {
+      try {
+        await AsyncStorage.setItem(
+          HISTORY_STORAGE_KEY,
+          JSON.stringify(customerHistories)
+        );
+      } catch (error) {
+        console.error(
+          'Failed to save customer history:',
+          error
+        );
+      }
+    };
+
+    saveCustomerHistories();
+  }, [customerHistories, historyLoaded]);
+
   const sendMessage = async () => {
     const userMessage = message.trim();
 
     if (!userMessage) {
-      Alert.alert('Message required', 'Please type a message first.');
+      Alert.alert(
+        'Message required',
+        'Please type a message first.'
+      );
       return;
     }
 
@@ -79,11 +155,16 @@ export default function HomeScreen() {
       const data = await response.json();
 
       if (!response.ok) {
-        throw new Error(data?.detail || 'Something went wrong');
+        throw new Error(
+          data?.detail || 'Something went wrong'
+        );
       }
 
-      const newReply = data.reply || 'No reply received.';
-      const newMemories = data.memories_used || [];
+      const newReply =
+        data.reply || 'No reply received.';
+
+      const newMemories =
+        data.memories_used || [];
 
       setReply(newReply);
       setMemories(newMemories);
@@ -99,17 +180,14 @@ export default function HomeScreen() {
         }),
       };
 
-      // Add conversation to current customer's history
-      setHistory((previousHistory) => {
-        const updatedHistory = [...previousHistory, newHistoryItem];
-
-        setCustomerHistories((previousCustomerHistories) => ({
-          ...previousCustomerHistories,
-          [customerId]: updatedHistory,
-        }));
-
-        return updatedHistory;
-      });
+      // Add new interaction only to current customer
+      setCustomerHistories((previousHistories) => ({
+        ...previousHistories,
+        [customerId]: [
+          ...(previousHistories[customerId] || []),
+          newHistoryItem,
+        ],
+      }));
     } catch (error) {
       console.error(error);
 
@@ -127,18 +205,9 @@ export default function HomeScreen() {
       return;
     }
 
-    // Save current customer's latest history
-    setCustomerHistories((previousCustomerHistories) => ({
-      ...previousCustomerHistories,
-      [customerId]: history,
-    }));
-
-    // Load selected customer's history
-    const selectedCustomerHistory =
-      customerHistories[newCustomerId] || [];
-
+    // Just switch customer.
+    // History automatically comes from customerHistories.
     setCustomerId(newCustomerId);
-    setHistory(selectedCustomerHistory);
 
     // Reset current conversation view
     setShowCustomerPicker(false);
@@ -151,10 +220,56 @@ export default function HomeScreen() {
     setShowProfile(false);
   };
 
+  const clearCurrentCustomerHistory = () => {
+    if (history.length === 0) {
+      Alert.alert(
+        'No history',
+        'There is no saved history for this customer.'
+      );
+      return;
+    }
+
+    Alert.alert(
+      'Clear Customer History',
+      `Delete all ${history.length} saved interaction${
+        history.length === 1 ? '' : 's'
+      } for ${customerId}?`,
+      [
+        {
+          text: 'Cancel',
+          style: 'cancel',
+        },
+        {
+          text: 'Clear',
+          style: 'destructive',
+          onPress: () => {
+            setCustomerHistories(
+              (previousHistories) => ({
+                ...previousHistories,
+                [customerId]: [],
+              })
+            );
+
+            setReply('');
+            setMemories([]);
+            setLastMessage('');
+            setSelectedHistoryIndex(null);
+            setShowHistory(false);
+            setShowMemories(false);
+          },
+        },
+      ]
+    );
+  };
+
   return (
     <KeyboardAvoidingView
       style={styles.container}
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      behavior={
+        Platform.OS === 'ios'
+          ? 'padding'
+          : undefined
+      }
     >
       <ScrollView
         contentContainerStyle={styles.scrollContent}
@@ -165,7 +280,9 @@ export default function HomeScreen() {
         {/* HEADER */}
         <View style={styles.header}>
           <View>
-            <Text style={styles.logo}>SupportMind</Text>
+            <Text style={styles.logo}>
+              SupportMind
+            </Text>
 
             <Text style={styles.subtitle}>
               AI Customer Support Agent
@@ -184,7 +301,11 @@ export default function HomeScreen() {
 
         {/* CUSTOMER PROFILE */}
         <Pressable
-          onPress={() => setShowProfile((previous) => !previous)}
+          onPress={() =>
+            setShowProfile(
+              (previous) => !previous
+            )
+          }
           style={({ pressed }) => [
             styles.profileCard,
             pressed && styles.buttonPressed,
@@ -276,7 +397,9 @@ export default function HomeScreen() {
         <View style={styles.customerSwitcherWrap}>
           <Pressable
             onPress={() =>
-              setShowCustomerPicker((previous) => !previous)
+              setShowCustomerPicker(
+                (previous) => !previous
+              )
             }
             style={({ pressed }) => [
               styles.switchCustomerButton,
@@ -300,53 +423,80 @@ export default function HomeScreen() {
                 Select Customer
               </Text>
 
-              {[
-                {
-                  id: 'C001',
-                  name: 'Current Customer',
-                },
-                {
-                  id: 'C002',
-                  name: 'Demo Customer',
-                },
-                {
-                  id: 'C003',
-                  name: 'New Demo Customer',
-                },
-              ].map((customer) => (
-                <Pressable
-                  key={customer.id}
-                  onPress={() => switchCustomer(customer.id)}
-                  style={({ pressed }) => [
-                    styles.customerOption,
-                    customerId === customer.id &&
-                      styles.customerOptionSelected,
-                    pressed && styles.buttonPressed,
-                  ]}
-                >
-                  <View style={styles.customerOptionAvatar}>
-                    <Text style={styles.customerOptionAvatarText}>
-                      {customer.id.charAt(1)}
-                    </Text>
-                  </View>
+              {CUSTOMERS.map((customer) => {
+                const customerHistoryCount =
+                  customerHistories[
+                    customer.id
+                  ]?.length || 0;
 
-                  <View style={styles.customerOptionInfo}>
-                    <Text style={styles.customerOptionId}>
-                      {customer.id}
-                    </Text>
+                return (
+                  <Pressable
+                    key={customer.id}
+                    onPress={() =>
+                      switchCustomer(
+                        customer.id
+                      )
+                    }
+                    style={({ pressed }) => [
+                      styles.customerOption,
+                      customerId ===
+                        customer.id &&
+                        styles.customerOptionSelected,
+                      pressed &&
+                        styles.buttonPressed,
+                    ]}
+                  >
+                    <View style={styles.customerOptionAvatar}>
+                      <Text
+                        style={
+                          styles.customerOptionAvatarText
+                        }
+                      >
+                        {customer.id.charAt(1)}
+                      </Text>
+                    </View>
 
-                    <Text style={styles.customerOptionName}>
-                      {customer.name}
-                    </Text>
-                  </View>
+                    <View style={styles.customerOptionInfo}>
+                      <Text
+                        style={
+                          styles.customerOptionId
+                        }
+                      >
+                        {customer.id}
+                      </Text>
 
-                  {customerId === customer.id && (
-                    <Text style={styles.customerOptionCheck}>
-                      ✓
-                    </Text>
-                  )}
-                </Pressable>
-              ))}
+                      <Text
+                        style={
+                          styles.customerOptionName
+                        }
+                      >
+                        {customer.name}
+                      </Text>
+                    </View>
+
+                    <View style={styles.customerOptionRight}>
+                      <Text
+                        style={
+                          styles.customerHistoryCount
+                        }
+                      >
+                        {customerHistoryCount}
+                      </Text>
+
+                      {customerId ===
+                        customer.id && (
+                        <Text
+                          style={
+                            styles.customerOptionCheck
+                          }
+                        >
+                          ✓
+                        </Text>
+                      )}
+                    </View>
+                  </Pressable>
+                );
+              })}
             </View>
           )}
         </View>
@@ -467,17 +617,27 @@ export default function HomeScreen() {
                 <View style={styles.learnedBox}>
                   <View style={styles.learnedHeader}>
                     <View style={styles.learnedIcon}>
-                      <Text style={styles.learnedIconText}>
+                      <Text
+                        style={styles.learnedIconText}
+                      >
                         ✨
                       </Text>
                     </View>
 
-                    <View style={styles.learnedHeaderContent}>
+                    <View
+                      style={
+                        styles.learnedHeaderContent
+                      }
+                    >
                       <Text style={styles.learnedTitle}>
                         What AI Learned
                       </Text>
 
-                      <Text style={styles.learnedSubtitle}>
+                      <Text
+                        style={
+                          styles.learnedSubtitle
+                        }
+                      >
                         Insights recalled from Hindsight
                       </Text>
                     </View>
@@ -485,29 +645,41 @@ export default function HomeScreen() {
 
                   <View style={styles.learnedDivider} />
 
-                  {memories.slice(0, 3).map((memory, index) => (
-                    <View
-                      key={`learned-${index}-${memory}`}
-                      style={styles.learnedItem}
-                    >
-                      <View style={styles.learnedCheck}>
-                        <Text style={styles.learnedCheckText}>
-                          ✓
+                  {memories
+                    .slice(0, 3)
+                    .map((memory, index) => (
+                      <View
+                        key={`learned-${index}-${memory}`}
+                        style={styles.learnedItem}
+                      >
+                        <View style={styles.learnedCheck}>
+                          <Text
+                            style={
+                              styles.learnedCheckText
+                            }
+                          >
+                            ✓
+                          </Text>
+                        </View>
+
+                        <Text
+                          style={styles.learnedText}
+                        >
+                          {memory}
                         </Text>
                       </View>
-
-                      <Text style={styles.learnedText}>
-                        {memory}
-                      </Text>
-                    </View>
-                  ))}
+                    ))}
 
                   <View style={styles.adaptationBox}>
-                    <Text style={styles.adaptationTitle}>
+                    <Text
+                      style={styles.adaptationTitle}
+                    >
                       🤖 AI adapted its response
                     </Text>
 
-                    <Text style={styles.adaptationText}>
+                    <Text
+                      style={styles.adaptationText}
+                    >
                       Previous customer context was considered before
                       generating this response.
                     </Text>
@@ -519,11 +691,14 @@ export default function HomeScreen() {
               {/* VIEW HINDSIGHT MEMORIES */}
               <Pressable
                 onPress={() =>
-                  setShowMemories((previous) => !previous)
+                  setShowMemories(
+                    (previous) => !previous
+                  )
                 }
                 style={({ pressed }) => [
                   styles.memoryToggleButton,
-                  pressed && styles.buttonPressed,
+                  pressed &&
+                    styles.buttonPressed,
                 ]}
               >
                 <Text style={styles.memoryToggleIcon}>
@@ -546,59 +721,65 @@ export default function HomeScreen() {
 
 
         {/* HINDSIGHT MEMORY */}
-        {reply !== '' && !loading && showMemories && (
-          <View style={styles.section}>
-            <View style={styles.memoryHeader}>
-              <Text style={styles.sectionTitle}>
-                🧠 Hindsight Memory
-              </Text>
-
-              <View style={styles.countBadge}>
-                <Text style={styles.countText}>
-                  {memories.length} found
+        {reply !== '' &&
+          !loading &&
+          showMemories && (
+            <View style={styles.section}>
+              <View style={styles.memoryHeader}>
+                <Text style={styles.sectionTitle}>
+                  🧠 Hindsight Memory
                 </Text>
-              </View>
-            </View>
 
-            <View style={styles.memoryCard}>
-              {memories.length > 0 ? (
-                memories.map((memory, index) => (
-                  <View
-                    key={`${index}-${memory}`}
-                    style={styles.memoryItem}
-                  >
-                    <View style={styles.memoryNumber}>
-                      <Text style={styles.memoryNumberText}>
-                        {index + 1}
-                      </Text>
-                    </View>
-
-                    <Text style={styles.memoryText}>
-                      {memory}
-                    </Text>
-                  </View>
-                ))
-              ) : (
-                <Text style={styles.noMemoryText}>
-                  No previous memories found.
-                </Text>
-              )}
-
-              {memories.length > 0 && (
-                <View style={styles.learningBox}>
-                  <Text style={styles.learningTitle}>
-                    ✨ Memory influenced this response
-                  </Text>
-
-                  <Text style={styles.learningText}>
-                    Previous customer history was recalled before
-                    generating this response.
+                <View style={styles.countBadge}>
+                  <Text style={styles.countText}>
+                    {memories.length} found
                   </Text>
                 </View>
-              )}
+              </View>
+
+              <View style={styles.memoryCard}>
+                {memories.length > 0 ? (
+                  memories.map((memory, index) => (
+                    <View
+                      key={`${index}-${memory}`}
+                      style={styles.memoryItem}
+                    >
+                      <View style={styles.memoryNumber}>
+                        <Text
+                          style={
+                            styles.memoryNumberText
+                          }
+                        >
+                          {index + 1}
+                        </Text>
+                      </View>
+
+                      <Text style={styles.memoryText}>
+                        {memory}
+                      </Text>
+                    </View>
+                  ))
+                ) : (
+                  <Text style={styles.noMemoryText}>
+                    No previous memories found.
+                  </Text>
+                )}
+
+                {memories.length > 0 && (
+                  <View style={styles.learningBox}>
+                    <Text style={styles.learningTitle}>
+                      ✨ Memory influenced this response
+                    </Text>
+
+                    <Text style={styles.learningText}>
+                      Previous customer history was recalled before
+                      generating this response.
+                    </Text>
+                  </View>
+                )}
+              </View>
             </View>
-          </View>
-        )}
+          )}
 
 
         {/* CUSTOMER HISTORY TOGGLE */}
@@ -606,33 +787,48 @@ export default function HomeScreen() {
           <View style={styles.section}>
             <Pressable
               onPress={() =>
-                setShowHistory((previous) => !previous)
+                setShowHistory(
+                  (previous) => !previous
+                )
               }
               style={({ pressed }) => [
                 styles.historyToggleButton,
-                pressed && styles.buttonPressed,
+                pressed &&
+                  styles.buttonPressed,
               ]}
             >
               <Text style={styles.historyToggleIcon}>
                 📋
               </Text>
 
-              <View style={styles.historyToggleContent}>
-                <Text style={styles.historyToggleTitle}>
+              <View
+                style={styles.historyToggleContent}
+              >
+                <Text
+                  style={styles.historyToggleTitle}
+                >
                   Customer History
                 </Text>
 
-                <Text style={styles.historyToggleSubtitle}>
+                <Text
+                  style={styles.historyToggleSubtitle}
+                >
                   {history.length} saved interaction
-                  {history.length === 1 ? '' : 's'}
+                  {history.length === 1
+                    ? ''
+                    : 's'}
                 </Text>
               </View>
 
-              <Text style={styles.historyToggleCount}>
+              <Text
+                style={styles.historyToggleCount}
+              >
                 {history.length}
               </Text>
 
-              <Text style={styles.historyToggleArrow}>
+              <Text
+                style={styles.historyToggleArrow}
+              >
                 {showHistory ? '↑' : '↓'}
               </Text>
             </Pressable>
@@ -641,114 +837,200 @@ export default function HomeScreen() {
 
 
         {/* CUSTOMER HISTORY */}
-        {history.length > 0 && showHistory && (
-          <View style={styles.section}>
-            <View style={styles.historyHeader}>
-              <View>
-                <Text style={styles.sectionTitle}>
-                  📋 Customer History
-                </Text>
+        {history.length > 0 &&
+          showHistory && (
+            <View style={styles.section}>
+              <View style={styles.historyHeader}>
+                <View>
+                  <Text style={styles.sectionTitle}>
+                    📋 Customer History
+                  </Text>
 
-                <Text style={styles.historySubtitle}>
-                  Recent support interactions
-                </Text>
-              </View>
+                  <Text style={styles.historySubtitle}>
+                    Recent support interactions
+                  </Text>
+                </View>
 
-              <View style={styles.historyCountBadge}>
-                <Text style={styles.historyCountText}>
-                  {history.length}
-                </Text>
-              </View>
-            </View>
-
-
-            <View style={styles.historyCard}>
-              {history
-                .slice()
-                .reverse()
-                .map((item, index) => {
-                  const originalIndex =
-                    history.length - 1 - index;
-
-                  const isSelected =
-                    selectedHistoryIndex === originalIndex;
-
-                  return (
-                    <Pressable
-                      key={`${item.message}-${index}`}
-                      onPress={() => {
-                        setSelectedHistoryIndex(originalIndex);
-                        setLastMessage(item.message);
-                        setReply(item.reply);
-                        setMemories(item.memories || []);
-                        setShowMemories(false);
-                      }}
-                      style={({ pressed }) => [
-                        styles.historyItem,
-                        isSelected &&
-                          styles.historyItemSelected,
-                        pressed && styles.buttonPressed,
-                      ]}
+                <View style={styles.historyHeaderRight}>
+                  <View
+                    style={styles.historyCountBadge}
+                  >
+                    <Text
+                      style={
+                        styles.historyCountText
+                      }
                     >
-                      {/* TIMELINE */}
-                      <View style={styles.timeline}>
-                        <View style={styles.timelineDot} />
+                      {history.length}
+                    </Text>
+                  </View>
 
-                        {index !== history.length - 1 && (
-                          <View style={styles.timelineLine} />
-                        )}
-                      </View>
+                  <Pressable
+                    onPress={
+                      clearCurrentCustomerHistory
+                    }
+                    style={({ pressed }) => [
+                      styles.clearHistoryButton,
+                      pressed &&
+                        styles.buttonPressed,
+                    ]}
+                  >
+                    <Text
+                      style={
+                        styles.clearHistoryText
+                      }
+                    >
+                      Clear
+                    </Text>
+                  </Pressable>
+                </View>
+              </View>
 
 
-                      {/* HISTORY CONTENT */}
-                      <View style={styles.historyContent}>
-                        <View style={styles.historyTimeRow}>
-                          <Text style={styles.historyTime}>
-                            {index === 0
-                              ? 'Latest interaction'
-                              : 'Previous interaction'}
-                          </Text>
+              <View style={styles.historyCard}>
+                {history
+                  .slice()
+                  .reverse()
+                  .map((item, index) => {
+                    const originalIndex =
+                      history.length - 1 - index;
 
-                          <Text style={styles.historyTimestamp}>
-                            {item.timestamp}
-                          </Text>
+                    const isSelected =
+                      selectedHistoryIndex ===
+                      originalIndex;
+
+                    return (
+                      <Pressable
+                        key={`${item.message}-${index}`}
+                        onPress={() => {
+                          setSelectedHistoryIndex(
+                            originalIndex
+                          );
+                          setLastMessage(
+                            item.message
+                          );
+                          setReply(item.reply);
+                          setMemories(
+                            item.memories || []
+                          );
+                          setShowMemories(false);
+                        }}
+                        style={({ pressed }) => [
+                          styles.historyItem,
+                          isSelected &&
+                            styles.historyItemSelected,
+                          pressed &&
+                            styles.buttonPressed,
+                        ]}
+                      >
+                        {/* TIMELINE */}
+                        <View style={styles.timeline}>
+                          <View
+                            style={
+                              styles.timelineDot
+                            }
+                          />
+
+                          {index !==
+                            history.length - 1 && (
+                            <View
+                              style={
+                                styles.timelineLine
+                              }
+                            />
+                          )}
                         </View>
 
-                        <Text style={styles.historyMessage}>
-                          {item.message}
-                        </Text>
 
-                        <View style={styles.historyReplyBox}>
-                          <Text style={styles.historyReplyLabel}>
-                            🤖 AI Response
-                          </Text>
+                        {/* HISTORY CONTENT */}
+                        <View
+                          style={styles.historyContent}
+                        >
+                          <View
+                            style={
+                              styles.historyTimeRow
+                            }
+                          >
+                            <Text
+                              style={
+                                styles.historyTime
+                              }
+                            >
+                              {index === 0
+                                ? 'Latest interaction'
+                                : 'Previous interaction'}
+                            </Text>
+
+                            <Text
+                              style={
+                                styles.historyTimestamp
+                              }
+                            >
+                              {item.timestamp}
+                            </Text>
+                          </View>
 
                           <Text
-                            style={styles.historyReply}
-                            numberOfLines={3}
+                            style={
+                              styles.historyMessage
+                            }
                           >
-                            {item.reply}
+                            {item.message}
                           </Text>
+
+                          <View
+                            style={
+                              styles.historyReplyBox
+                            }
+                          >
+                            <Text
+                              style={
+                                styles.historyReplyLabel
+                              }
+                            >
+                              🤖 AI Response
+                            </Text>
+
+                            <Text
+                              style={
+                                styles.historyReply
+                              }
+                              numberOfLines={3}
+                            >
+                              {item.reply}
+                            </Text>
+                          </View>
+
+                          <View
+                            style={
+                              styles.historyMemoryBadge
+                            }
+                          >
+                            <Text
+                              style={
+                                styles.historyMemoryText
+                              }
+                            >
+                              🧠 {item.memoryCount}{' '}
+                              memories used
+                            </Text>
+                          </View>
                         </View>
 
-                        <View style={styles.historyMemoryBadge}>
-                          <Text style={styles.historyMemoryText}>
-                            🧠 {item.memoryCount} memories used
-                          </Text>
-                        </View>
-                      </View>
-
-                      <Text style={styles.historyOpenHint}>
-                        {isSelected
-                          ? '✓ Opened'
-                          : 'Tap to open'}
-                      </Text>
-                    </Pressable>
-                  );
-                })}
+                        <Text
+                          style={
+                            styles.historyOpenHint
+                          }
+                        >
+                          {isSelected
+                            ? '✓ Opened'
+                            : 'Tap to open'}
+                        </Text>
+                      </Pressable>
+                    );
+                  })}
+              </View>
             </View>
-          </View>
-        )}
+          )}
 
 
         {/* INPUT */}
@@ -772,8 +1054,11 @@ export default function HomeScreen() {
             disabled={loading}
             style={({ pressed }) => [
               styles.sendButton,
-              loading && styles.disabledButton,
-              pressed && !loading && styles.buttonPressed,
+              loading &&
+                styles.disabledButton,
+              pressed &&
+                !loading &&
+                styles.buttonPressed,
             ]}
           >
             {loading ? (
@@ -1061,6 +1346,25 @@ const styles = StyleSheet.create({
     fontSize: 10,
     color: '#9ca3af',
     marginTop: 2,
+  },
+
+  customerOptionRight: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+
+  customerHistoryCount: {
+    minWidth: 24,
+    height: 24,
+    borderRadius: 12,
+    backgroundColor: '#f3f4f6',
+    color: '#6b7280',
+    textAlign: 'center',
+    textAlignVertical: 'center',
+    fontSize: 10,
+    fontWeight: '800',
+    paddingTop: 6,
+    marginRight: 6,
   },
 
   customerOptionCheck: {
@@ -1557,6 +1861,12 @@ const styles = StyleSheet.create({
     alignItems: 'flex-start',
   },
 
+  historyHeaderRight: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 7,
+  },
+
   historySubtitle: {
     fontSize: 11,
     color: '#9ca3af',
@@ -1576,6 +1886,19 @@ const styles = StyleSheet.create({
   historyCountText: {
     color: '#ffffff',
     fontSize: 11,
+    fontWeight: '800',
+  },
+
+  clearHistoryButton: {
+    backgroundColor: '#fee2e2',
+    borderRadius: 10,
+    paddingHorizontal: 9,
+    paddingVertical: 7,
+  },
+
+  clearHistoryText: {
+    color: '#dc2626',
+    fontSize: 10,
     fontWeight: '800',
   },
 
