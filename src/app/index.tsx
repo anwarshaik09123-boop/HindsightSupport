@@ -12,7 +12,7 @@ import {
   View,
 } from 'react-native';
 
-const API_URL = 'http://192.168.105.149:8000/chat';
+const API_URL = 'https://hindsightsupport.onrender.com/chat';
 
 type HistoryItem = {
   message: string;
