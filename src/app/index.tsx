@@ -19,6 +19,7 @@ type HistoryItem = {
   reply: string;
   memories: string[];
   memoryCount: number;
+  timestamp: string;
 };
 
 export default function HomeScreen() {
@@ -37,9 +38,9 @@ export default function HomeScreen() {
 
   const [showMemories, setShowMemories] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
-  const [selectedHistoryIndex, setSelectedHistoryIndex] = useState<number | null>(
-    null
-  );
+  const [selectedHistoryIndex, setSelectedHistoryIndex] = useState<
+    number | null
+  >(null);
 
   const [customerId, setCustomerId] = useState('C001');
   const [showCustomerPicker, setShowCustomerPicker] = useState(false);
@@ -92,6 +93,10 @@ export default function HomeScreen() {
         reply: newReply,
         memories: newMemories,
         memoryCount: newMemories.length,
+        timestamp: new Date().toLocaleTimeString([], {
+          hour: '2-digit',
+          minute: '2-digit',
+        }),
       };
 
       // Add conversation to current customer's history
@@ -457,6 +462,60 @@ export default function HomeScreen() {
               </View>
 
 
+              {/* WHAT AI LEARNED */}
+              {memories.length > 0 && (
+                <View style={styles.learnedBox}>
+                  <View style={styles.learnedHeader}>
+                    <View style={styles.learnedIcon}>
+                      <Text style={styles.learnedIconText}>
+                        ✨
+                      </Text>
+                    </View>
+
+                    <View style={styles.learnedHeaderContent}>
+                      <Text style={styles.learnedTitle}>
+                        What AI Learned
+                      </Text>
+
+                      <Text style={styles.learnedSubtitle}>
+                        Insights recalled from Hindsight
+                      </Text>
+                    </View>
+                  </View>
+
+                  <View style={styles.learnedDivider} />
+
+                  {memories.slice(0, 3).map((memory, index) => (
+                    <View
+                      key={`learned-${index}-${memory}`}
+                      style={styles.learnedItem}
+                    >
+                      <View style={styles.learnedCheck}>
+                        <Text style={styles.learnedCheckText}>
+                          ✓
+                        </Text>
+                      </View>
+
+                      <Text style={styles.learnedText}>
+                        {memory}
+                      </Text>
+                    </View>
+                  ))}
+
+                  <View style={styles.adaptationBox}>
+                    <Text style={styles.adaptationTitle}>
+                      🤖 AI adapted its response
+                    </Text>
+
+                    <Text style={styles.adaptationText}>
+                      Previous customer context was considered before
+                      generating this response.
+                    </Text>
+                  </View>
+                </View>
+              )}
+
+
               {/* VIEW HINDSIGHT MEMORIES */}
               <Pressable
                 onPress={() =>
@@ -643,11 +702,17 @@ export default function HomeScreen() {
 
                       {/* HISTORY CONTENT */}
                       <View style={styles.historyContent}>
-                        <Text style={styles.historyTime}>
-                          {index === 0
-                            ? 'Latest interaction'
-                            : 'Previous interaction'}
-                        </Text>
+                        <View style={styles.historyTimeRow}>
+                          <Text style={styles.historyTime}>
+                            {index === 0
+                              ? 'Latest interaction'
+                              : 'Previous interaction'}
+                          </Text>
+
+                          <Text style={styles.historyTimestamp}>
+                            {item.timestamp}
+                          </Text>
+                        </View>
 
                         <Text style={styles.historyMessage}>
                           {item.message}
@@ -1208,6 +1273,112 @@ const styles = StyleSheet.create({
   },
 
 
+  /* WHAT AI LEARNED */
+
+  learnedBox: {
+    backgroundColor: '#ffffff',
+    borderRadius: 19,
+    padding: 16,
+    marginTop: 10,
+    marginBottom: 10,
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+  },
+
+  learnedHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+
+  learnedIcon: {
+    width: 40,
+    height: 40,
+    borderRadius: 13,
+    backgroundColor: '#fef3c7',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 10,
+  },
+
+  learnedIconText: {
+    fontSize: 18,
+  },
+
+  learnedHeaderContent: {
+    flex: 1,
+  },
+
+  learnedTitle: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: '#111827',
+  },
+
+  learnedSubtitle: {
+    fontSize: 10,
+    color: '#9ca3af',
+    marginTop: 3,
+  },
+
+  learnedDivider: {
+    height: 1,
+    backgroundColor: '#f3f4f6',
+    marginVertical: 13,
+  },
+
+  learnedItem: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    marginBottom: 10,
+  },
+
+  learnedCheck: {
+    width: 21,
+    height: 21,
+    borderRadius: 11,
+    backgroundColor: '#dcfce7',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 9,
+    marginTop: 1,
+  },
+
+  learnedCheckText: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#16a34a',
+  },
+
+  learnedText: {
+    flex: 1,
+    fontSize: 12,
+    lineHeight: 18,
+    color: '#374151',
+  },
+
+  adaptationBox: {
+    backgroundColor: '#f5f3ff',
+    borderRadius: 13,
+    padding: 12,
+    marginTop: 3,
+    borderWidth: 1,
+    borderColor: '#ddd6fe',
+  },
+
+  adaptationTitle: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#6d28d9',
+    marginBottom: 4,
+  },
+
+  adaptationText: {
+    fontSize: 10,
+    lineHeight: 16,
+    color: '#7c3aed',
+  },
+
+
   /* HINDSIGHT MEMORY */
 
   memoryToggleButton: {
@@ -1453,11 +1624,23 @@ const styles = StyleSheet.create({
     paddingBottom: 18,
   },
 
+  historyTimeRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 5,
+  },
+
   historyTime: {
     fontSize: 10,
     fontWeight: '700',
     color: '#7c3aed',
-    marginBottom: 5,
+  },
+
+  historyTimestamp: {
+    fontSize: 9,
+    color: '#9ca3af',
+    fontWeight: '700',
   },
 
   historyMessage: {
